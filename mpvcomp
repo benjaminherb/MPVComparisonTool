@@ -1,5 +1,7 @@
 #!/bin/bash
 
+SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
+
 # Usage: ./mpvcomp main.mp4 extra1.mp4 extra2.mp4 ...
 if [ $# -lt 1 ]; then
     echo "Usage: $0 main.mp4 [more.mp4 ...]"
@@ -58,4 +60,4 @@ done
 draws="${draws%,}"
 lavfi+="[vid1]$draws[vo]"
 
-mpv "$main" "${externals[@]}" --lavfi-complex="$lavfi" --loop
+mpv "$main" "${externals[@]}" --lavfi-complex="$lavfi" --loop --script="${SCRIPT_PATH}/video_comparison_tool.lua"
