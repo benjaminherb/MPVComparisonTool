@@ -12,7 +12,6 @@ chmod +x mpvcomp
 ```
 
 Alternatively install the script locally
-
 ```
 chmod +x install.sh
 ./install.sh
@@ -24,3 +23,4 @@ Up to 9 videos are supported in a grid (however more can be loaded).
 ![Menu](img/menu.jpg "Menu")
 ![Horizontal Layout](img/horizontal.jpg "Horizontal Layout")
 ![Grid Layout](img/grid.jpg "Grid Layout")
+Licensed under Creative Commons Attribution 3.0 license.  (c) copyright 2008, Blender Foundation / www.bigbuckbunny.org
