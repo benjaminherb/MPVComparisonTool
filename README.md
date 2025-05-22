@@ -10,6 +10,14 @@ cd MPVComparisonTool
 chmod +x mpvcomp
 ./mpvcomp v1.mp4 v2.mp4 v3.mp4 [...]
 ```
+
+Alternatively install the script locally
+
+```
+chmod +x install.sh
+./install.sh
+```
+
 Up to 9 videos are supported in a grid (however more can be loaded).
 
 ## Examples
