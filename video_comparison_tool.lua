@@ -498,6 +498,36 @@ local function show_layout_menu()
     mp.add_forced_key_binding("ESC", "layout-cancel", layout_cancel)
 end
 
+-- when the menu is not visible
+local function global_layout_up()
+    if menu_active then
+        layout_up()
+        return
+    end
+
+    update_menu_entries()
+    menu_index = menu_index - 1
+    if menu_index < 1 then menu_index = #modes end
+    apply_mode()
+    mp.osd_message("Selected: " .. (modes[menu_index] and modes[menu_index].name or ""), 1)
+end
+
+local function global_layout_down()
+    if menu_active then
+        layout_down()
+        return
+    end
+
+    update_menu_entries()
+    menu_index = menu_index + 1
+    if menu_index > #modes then menu_index = 1 end
+    apply_mode()
+    mp.osd_message("Selected: " .. (modes[menu_index] and modes[menu_index].name or ""), 1)
+end
+
+mp.add_forced_key_binding("UP", "global-layout-up", global_layout_up)
+mp.add_forced_key_binding("DOWN", "global-layout-down", global_layout_down)
+
 mp.add_key_binding("Z", "reset-view", function()
     local grid = build_grid_layout()
     if grid then
