@@ -487,9 +487,9 @@ end
 local function show_layout_menu()
     if menu_active then return end
     menu_active = true
-    
-    menu_index = 1
     update_menu_entries()
+    if menu_index < 1 then menu_index = 1 end
+    if menu_index > #modes then menu_index = #modes end
     
     render_menu()
     mp.add_forced_key_binding("UP", "layout-up", layout_up)
