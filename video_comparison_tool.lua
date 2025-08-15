@@ -84,7 +84,7 @@ local function escape_special_chars(str)
     return str:gsub(":", "\\:"):gsub("'", "\\'"):gsub("/", "\\/")
 end
 
-local function generate_info_text(vid_index, filename)
+local function generate_info_text(vid_index, filename, font_multiplier)
     if not overlay_active then
         return string.format("[vid%d]copy", vid_index)
     end
@@ -92,23 +92,46 @@ local function generate_info_text(vid_index, filename)
     local tp = text_position_params()
     local filename_esc = escape_special_chars(filename)
     local x_title = "(w-text_w)/2"
+    local text_color = "white@0.7"
+    local border_color = "black@0.7"
+    
+    -- Apply font multiplier for grid layouts
+    local font_size = tp.font_size
+    if font_multiplier then
+        font_size = math.max(math.floor(font_size * font_multiplier), 16)
+    end
+    local shadow = math.max(font_size / 10, 2)
+
+    -- Only show filename, no frame/time counters
+    local base = string.format(
+        "[vid%d]drawtext=text='%s':x=%s:y=%d:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d",
+        vid_index, filename_esc,
+        x_title, tp.title_y, font_size, text_color, border_color, shadow
+    )
+
+    return base
+end
+
+local function generate_global_counter()
+    if not overlay_active then
+        return ""
+    end
+
+    local tp = text_position_params()
     local x_info = "(w-text_w)/2"
     local text_color = "white@0.7"
     local border_color = "black@0.7"
 
     local framerate = mp.get_property_number("estimated-vf-fps", "60")
 
-    local base = string.format(
-        "[vid%d]drawtext=text='%s':x=%s:y=%d:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d," ..
+    local counter = string.format(
         "drawtext=text='%%{eif\\:t*%s+0.1\\:d}':x=%s:y=%s:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d," ..
         "drawtext=text='%%{pts\\:hms}':x=%s:y=%s:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d",
-        vid_index, filename_esc,
-        x_title, tp.title_y, tp.font_size, text_color, border_color, tp.shadow,
         framerate, x_info, tp.frame_y, tp.font_size, text_color, border_color, tp.shadow,
         x_info, tp.time_y, tp.font_size, text_color, border_color, tp.shadow
     )
 
-    return base
+    return counter
 end
 
 local function build_grid_layout()
@@ -123,7 +146,8 @@ local function build_grid_layout()
     
     for i = 1, video_count do
         local filename = get_filename(i)
-        local text_overlay = generate_info_text(i, filename) .. string.format("[v%d];", i)
+        -- Use larger font multiplier for grid layout since videos are smaller
+        local text_overlay = generate_info_text(i, filename, 3.0) .. string.format("[v%d];", i)
         filter_chain = filter_chain .. text_overlay
     end
 
@@ -161,6 +185,14 @@ local function build_grid_layout()
         filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
     else
         msg.warn("Could not determine source video resolution; not scaling grid output")
+    end
+
+    -- Add global frame/time counter at bottom center
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
     end
 
     return filter_chain
@@ -234,6 +266,13 @@ local function build_grid_centered_layout()
         filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
     else
         msg.warn("Could not determine source video resolution; not scaling grid output")
+    end
+
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
     end
 
     return filter_chain
@@ -442,6 +481,13 @@ local function build_grid_progressive_layout()
         msg.warn("Could not determine source video resolution; not scaling grid output")
     end
 
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
+    end
+
     return filter_chain
 end
 
@@ -482,6 +528,13 @@ local function build_h_centered_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end
     
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
+    end
+    
     return filter_chain
 end
 
@@ -520,6 +573,13 @@ local function build_v_centered_layout()
             table.insert(inputs, "[v" .. i .. "]")
         end
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("vstack=inputs=%d[vo]", video_count)
+    end
+    
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
     end
     
     return filter_chain
@@ -573,6 +633,13 @@ local function build_h_progressive_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end
     
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
+    end
+    
     return filter_chain
 end
 
@@ -624,6 +691,14 @@ local function build_v_progressive_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("vstack=inputs=%d[vo]", video_count)
     end
     
+    -- Add global frame/time counter at bottom center
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
+    end
+    
     return filter_chain
 end
 
@@ -645,7 +720,14 @@ local function build_single_video(index)
     end
     
     local info_text = generate_info_text(index, filename)
-    filter_chain = filter_chain .. info_text .. "[vo]"
+    filter_chain = filter_chain .. info_text .. string.format("[single%d];", index)
+    
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        filter_chain = filter_chain .. string.format("[single%d]%s[vo]", index, global_counter)
+    else
+        filter_chain = filter_chain .. string.format("[single%d]copy[vo]", index)
+    end
     
     msg.info(filter_chain)
     return filter_chain
