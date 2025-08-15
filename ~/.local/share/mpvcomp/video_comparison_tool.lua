@@ -15,10 +15,6 @@ local menu_index = 1
 local menu_active = false
 local original_layout = nil
 local current_font_size = nil
-local overlay_active = true
--- Multiplier applied to font size when rendering the Grid layout.
--- Set to <1.0 to make grid text smaller, >1.0 to make it larger.
-local GRID_TEXT_SCALE = 1.0
 
 local function count_video_tracks()
     local count = 0
@@ -86,11 +82,6 @@ local function escape_special_chars(str)
 end
 
 local function generate_info_text(vid_index, filename)
-    if not overlay_active then
-        -- return a passthrough filter so callers that append labels produce valid chains
-        return string.format("[vid%d]copy", vid_index)
-    end
-
     local tp = text_position_params()
     local filename_esc = escape_special_chars(filename)
     local x_title = "(w-text_w)/2"
@@ -100,7 +91,7 @@ local function generate_info_text(vid_index, filename)
 
     local framerate = mp.get_property_number("estimated-vf-fps", "60")
 
-    local base = string.format(
+    return string.format(
         "[vid%d]drawtext=text='%s':x=%s:y=%d:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d," ..
         "drawtext=text='%%{eif\\:t*%s+0.1\\:d}':x=%s:y=%s:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d," ..
         "drawtext=text='%%{pts\\:hms}':x=%s:y=%s:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d",
@@ -109,10 +100,6 @@ local function generate_info_text(vid_index, filename)
         framerate, x_info, tp.frame_y, tp.font_size, text_color, border_color, tp.shadow,
         x_info, tp.time_y, tp.font_size, text_color, border_color, tp.shadow
     )
-
-    -- no launcher-specific hints here; mpvcomp provides a unified starting overlay
-
-    return base
 end
 
 local function build_grid_layout()
@@ -156,20 +143,6 @@ local function build_grid_layout()
         end
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end 
-
-    -- Try to scale the combined grid output to the main video's source resolution
-    local target_w = mp.get_property_number("video-params/w", 0)
-    local target_h = mp.get_property_number("video-params/h", 0)
-    if target_w and target_w > 0 and target_h and target_h > 0 then
-        -- take the existing [vo] output and scale it to the source resolution
-        -- ensure we separate filter descriptions with a semicolon so we don't
-        -- end up with '[vo][vo]scale...' which FFmpeg rejects
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
-    else
-        msg.warn("Could not determine source video resolution; not scaling grid output")
-    end
 
     return filter_chain
 end
@@ -395,9 +368,9 @@ end
 mp.register_event("file-loaded", function()
     original_layout = mp.get_property("lavfi-complex")
     msg.info("Original layout stored: " .. (original_layout or "none"))
-
+    
     update_menu_entries()
-
+    
     if not original_layout or original_layout == "" then
         local grid = build_grid_layout()
         if grid then
@@ -514,9 +487,9 @@ end
 local function show_layout_menu()
     if menu_active then return end
     menu_active = true
+    
+    menu_index = 1
     update_menu_entries()
-    if menu_index < 1 then menu_index = 1 end
-    if menu_index > #modes then menu_index = #modes end
     
     render_menu()
     mp.add_forced_key_binding("UP", "layout-up", layout_up)
@@ -524,36 +497,6 @@ local function show_layout_menu()
     mp.add_forced_key_binding("ENTER", "layout-select", layout_select)
     mp.add_forced_key_binding("ESC", "layout-cancel", layout_cancel)
 end
-
--- when the menu is not visible
-local function global_layout_up()
-    if menu_active then
-        layout_up()
-        return
-    end
-
-    update_menu_entries()
-    menu_index = menu_index - 1
-    if menu_index < 1 then menu_index = #modes end
-    apply_mode()
-    mp.osd_message("Selected: " .. (modes[menu_index] and modes[menu_index].name or ""), 1)
-end
-
-local function global_layout_down()
-    if menu_active then
-        layout_down()
-        return
-    end
-
-    update_menu_entries()
-    menu_index = menu_index + 1
-    if menu_index > #modes then menu_index = 1 end
-    apply_mode()
-    mp.osd_message("Selected: " .. (modes[menu_index] and modes[menu_index].name or ""), 1)
-end
-
-mp.add_forced_key_binding("UP", "global-layout-up", global_layout_up)
-mp.add_forced_key_binding("DOWN", "global-layout-down", global_layout_down)
 
 mp.add_key_binding("Z", "reset-view", function()
     local grid = build_grid_layout()
@@ -564,29 +507,3 @@ mp.add_key_binding("Z", "reset-view", function()
 end)
 
 mp.add_key_binding("X", "show-layout-menu", show_layout_menu)
-
--- Toggle overlays (on-screen text) with O
-local function toggle_overlay()
-    overlay_active = not overlay_active
-    -- if menu visible, re-render; otherwise reapply current layout to update overlays
-    if menu_active then
-        render_menu()
-    else
-        -- reapply current layout to update overlays on the video output
-        apply_mode()
-    end
-    mp.osd_message("overlays: " .. (overlay_active and "on" or "off"), 1)
-end
-
-mp.add_key_binding("O", "toggle-overlay", toggle_overlay)
-
--- Toggle video-unscaled (pixel-perfect) with P
-local function toggle_video_unscaled()
-    local cur = mp.get_property_native("video-unscaled")
-    if cur == nil then cur = false end
-    local nextv = not cur
-    mp.set_property_native("video-unscaled", nextv)
-    mp.osd_message("video-unscaled: " .. (nextv and "on" or "off"), 1)
-end
-
-mp.add_key_binding("P", "toggle-video-unscaled", toggle_video_unscaled)
