@@ -5,6 +5,8 @@ local assdraw = require 'mp.assdraw'
 
 local modes = {
     { name = "Grid", layout = "grid" },
+    { name = "Grid Center Crop", layout = "grid_centered" },
+    { name = "Grid Progressive Crop", layout = "grid_progressive" },
     { name = "Cropped Horizontal", layout = "h_centered" },
     { name = "Cropped Vertical", layout = "v_centered" },
     { name = "Progressive Horizontal", layout = "h_progressive" },
@@ -150,6 +152,285 @@ local function build_grid_layout()
         end
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end 
+
+    local target_w = mp.get_property_number("video-params/w", 0)
+    local target_h = mp.get_property_number("video-params/h", 0)
+    if target_w and target_w > 0 and target_h and target_h > 0 then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
+    else
+        msg.warn("Could not determine source video resolution; not scaling grid output")
+    end
+
+    return filter_chain
+end
+
+local function build_grid_centered_layout()
+    local video_count = count_video_tracks()
+    if video_count < 1 then
+        mp.osd_message("No video tracks found", 2)
+        return nil
+    end
+    
+    calculate_font_size()
+    local filter_chain = ""
+    
+    -- Calculate grid dimensions
+    local cols = math.ceil(math.sqrt(video_count))
+    local rows = math.ceil(video_count / cols)
+    
+    for i = 1, video_count do
+        local filename = get_filename(i)
+        
+        if video_count == 1 then
+            local text_overlay = generate_info_text(i, filename)
+            filter_chain = filter_chain .. text_overlay .. string.format("[v%d];", i)
+        else
+            -- Crop from center for grid layout
+            local crop_width = string.format("iw/%d", cols)
+            local crop_height = string.format("ih/%d", rows)
+            
+            filter_chain = filter_chain .. string.format("[vid%d]crop=%s:%s:(iw-(%s))/2:(ih-(%s))/2[crop%d];", 
+                i, crop_width, crop_height, crop_width, crop_height, i)
+            
+            local crop_info = generate_info_text(0, filename)
+            filter_chain = filter_chain .. crop_info:gsub("%[vid%d%]", string.format("[crop%d]", i)) .. 
+                           string.format("[v%d];", i)
+        end
+    end
+
+    if video_count == 1 then
+        filter_chain = filter_chain .. "[v1]copy[vo]"
+    elseif video_count == 2 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[vo]"
+    elseif video_count == 3 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3]pad=w=2*iw:h=ih:x=(ow-iw)/2:y=0[scaled_v3];[tmp1][scaled_v3]vstack=inputs=2[vo]"
+    elseif video_count == 4 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3][v4]hstack=inputs=2[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 5 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5]hstack=inputs=2[tmp2_sm];[tmp2_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 6 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 7 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1_sm];[tmp1_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp1];[v3][v4][v5]hstack=inputs=3[tmp2];[v6][v7]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
+    elseif video_count == 8 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2]vstack=inputs=2[tmp4];[tmp4][tmp3]vstack=inputs=2[vo]"
+    elseif video_count == 9 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8][v9]hstack=inputs=3[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
+    else
+        local inputs = {}
+        for i = 1, video_count do
+            table.insert(inputs, "[v" .. i .. "]")
+        end
+        filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
+    end
+
+    local target_w = mp.get_property_number("video-params/w", 0)
+    local target_h = mp.get_property_number("video-params/h", 0)
+    if target_w and target_w > 0 and target_h and target_h > 0 then
+        local sep = ''
+        if filter_chain:sub(-1) ~= ';' then sep = ';' end
+        filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
+    else
+        msg.warn("Could not determine source video resolution; not scaling grid output")
+    end
+
+    return filter_chain
+end
+
+local function build_grid_progressive_layout()
+    local video_count = count_video_tracks()
+    if video_count < 1 then
+        mp.osd_message("No video tracks found", 2)
+        return nil
+    end
+    
+    calculate_font_size()
+    local filter_chain = ""
+    
+    -- Calculate grid dimensions
+    local cols = math.ceil(math.sqrt(video_count))
+    local rows = math.ceil(video_count / cols)
+    
+    for i = 1, video_count do
+        local filename = get_filename(i)
+        
+        if video_count == 1 then
+            local text_overlay = generate_info_text(i, filename)
+            filter_chain = filter_chain .. text_overlay .. string.format("[v%d];", i)
+        else
+            -- Progressive crop for grid layout
+            local crop_width, crop_height, x_position, y_position
+            
+            if video_count == 2 then
+                crop_width = "iw/2"
+                crop_height = "ih"
+                if i == 1 then
+                    x_position = "0"
+                    y_position = "0"
+                else
+                    x_position = "iw/2"
+                    y_position = "0"
+                end
+            elseif video_count == 3 then
+                crop_width = "iw/2"
+                crop_height = "ih/2"
+                if i <= 2 then
+                    -- Top row
+                    x_position = (i == 1) and "0" or "iw/2"
+                    y_position = "0"
+                else
+                    -- Bottom row (single video, centered)
+                    x_position = "iw/4"
+                    y_position = "ih/2"
+                end
+            elseif video_count == 4 then
+                crop_width = "iw/2"
+                crop_height = "ih/2"
+                local row = math.floor((i - 1) / 2)
+                local col = (i - 1) % 2
+                x_position = (col == 0) and "0" or "iw/2"
+                y_position = (row == 0) and "0" or "ih/2"
+            elseif video_count == 5 then
+                crop_width = "iw/3"
+                crop_height = "ih/2"
+                if i <= 3 then
+                    -- Top row (3 videos)
+                    local pos = i - 1
+                    if pos == 0 then
+                        x_position = "0"
+                    elseif pos == 1 then
+                        x_position = "iw/3"
+                    else
+                        x_position = "2*iw/3"
+                    end
+                    y_position = "0"
+                else
+                    -- Bottom row (2 videos)
+                    if i == 4 then
+                        x_position = "iw/6"
+                    else
+                        x_position = "iw/2"
+                    end
+                    y_position = "ih/2"
+                end
+            elseif video_count == 6 then
+                crop_width = "iw/3"
+                crop_height = "ih/2"
+                local row = math.floor((i - 1) / 3)
+                local col = (i - 1) % 3
+                x_position = string.format("%d*iw/3", col)
+                y_position = (row == 0) and "0" or "ih/2"
+            elseif video_count == 7 then
+                -- 2×3×2 layout
+                crop_width = "iw/3"
+                crop_height = "ih/3"
+                if i <= 2 then
+                    -- First row (2 videos)
+                    x_position = (i == 1) and "iw/6" or "iw/2"
+                    y_position = "0"
+                elseif i <= 5 then
+                    -- Second row (3 videos)
+                    local pos = i - 3
+                    x_position = string.format("%d*iw/3", pos)
+                    y_position = "ih/3"
+                else
+                    -- Third row (2 videos)
+                    x_position = (i == 6) and "iw/6" or "iw/2"
+                    y_position = "2*ih/3"
+                end
+            elseif video_count == 8 then
+                -- 3×3×2 layout
+                crop_width = "iw/3"
+                crop_height = "ih/3"
+                if i <= 3 then
+                    -- First row (3 videos)
+                    x_position = string.format("%d*iw/3", i - 1)
+                    y_position = "0"
+                elseif i <= 6 then
+                    -- Second row (3 videos)
+                    x_position = string.format("%d*iw/3", i - 4)
+                    y_position = "ih/3"
+                else
+                    -- Third row (2 videos)
+                    x_position = (i == 7) and "iw/6" or "iw/2"
+                    y_position = "2*ih/3"
+                end
+            elseif video_count == 9 then
+                crop_width = "iw/3"
+                crop_height = "ih/3"
+                local row = math.floor((i - 1) / 3)
+                local col = (i - 1) % 3
+                x_position = string.format("%d*iw/3", col)
+                y_position = string.format("%d*ih/3", row)
+            else
+                -- Default to original logic for other counts
+                local cols = math.ceil(math.sqrt(video_count))
+                local rows = math.ceil(video_count / cols)
+                crop_width = string.format("iw/%d", cols)
+                crop_height = string.format("ih/%d", rows)
+                
+                local col = ((i - 1) % cols)
+                local row = math.floor((i - 1) / cols)
+                
+                if cols == 1 then
+                    x_position = "0"
+                elseif col == 0 then
+                    x_position = "0"
+                elseif col == cols - 1 then
+                    x_position = string.format("iw-(%s)", crop_width)
+                else
+                    local ratio = string.format("%f", col / (cols - 1))
+                    x_position = string.format("(iw-(%s))*%s", crop_width, ratio)
+                end
+                
+                if rows == 1 then
+                    y_position = "0"
+                elseif row == 0 then
+                    y_position = "0"
+                elseif row == rows - 1 then
+                    y_position = string.format("ih-(%s)", crop_height)
+                else
+                    local ratio = string.format("%f", row / (rows - 1))
+                    y_position = string.format("(ih-(%s))*%s", crop_height, ratio)
+                end
+            end
+            
+            filter_chain = filter_chain .. string.format("[vid%d]crop=%s:%s:%s:%s[crop%d];", 
+                i, crop_width, crop_height, x_position, y_position, i)
+            
+            local crop_info = generate_info_text(0, filename)
+            filter_chain = filter_chain .. crop_info:gsub("%[vid%d%]", string.format("[crop%d]", i)) .. 
+                           string.format("[v%d];", i)
+        end
+    end
+
+    if video_count == 1 then
+        filter_chain = filter_chain .. "[v1]copy[vo]"
+    elseif video_count == 2 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[vo]"
+    elseif video_count == 3 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3]pad=w=2*iw:h=ih:x=(ow-iw)/2:y=0[scaled_v3];[tmp1][scaled_v3]vstack=inputs=2[vo]"
+    elseif video_count == 4 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3][v4]hstack=inputs=2[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 5 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5]hstack=inputs=2[tmp2_sm];[tmp2_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 6 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 7 then
+        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1_sm];[tmp1_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp1];[v3][v4][v5]hstack=inputs=3[tmp2];[v6][v7]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
+    elseif video_count == 8 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2]vstack=inputs=2[tmp4];[tmp4][tmp3]vstack=inputs=2[vo]"
+    elseif video_count == 9 then
+        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8][v9]hstack=inputs=3[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
+    else
+        local inputs = {}
+        for i = 1, video_count do
+            table.insert(inputs, "[v" .. i .. "]")
+        end
+        filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
+    end
 
     local target_w = mp.get_property_number("video-params/w", 0)
     local target_h = mp.get_property_number("video-params/h", 0)
@@ -371,7 +652,7 @@ local function build_single_video(index)
 end
 
 local function update_menu_entries()
-    while #modes > 5 do
+    while #modes > 7 do
         table.remove(modes)
     end
     
@@ -407,6 +688,22 @@ local function apply_mode()
             mp.osd_message("Switched to Grid View", 2)
         else
             mp.osd_message("Could not create grid layout", 2)
+        end
+    elseif selected.layout == "grid_centered" then
+        local layout = build_grid_centered_layout()
+        if layout then
+            mp.set_property("lavfi-complex", layout)
+            mp.osd_message("Switched to Grid Center Crop View", 2)
+        else
+            mp.osd_message("Could not create grid center crop layout", 2)
+        end
+    elseif selected.layout == "grid_progressive" then
+        local layout = build_grid_progressive_layout()
+        if layout then
+            mp.set_property("lavfi-complex", layout)
+            mp.osd_message("Switched to Grid Progressive Crop View", 2)
+        else
+            mp.osd_message("Could not create grid progressive crop layout", 2)
         end
     elseif selected.layout == "h_centered" then
         local layout = build_h_centered_layout()
