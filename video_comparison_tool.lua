@@ -4,16 +4,35 @@ local utils = require 'mp.utils'
 local assdraw = require 'mp.assdraw'
 
 local modes = {
-    { name = "Grid", layout = "grid" },
-    { name = "Grid Center Crop", layout = "grid_centered" },
-    { name = "Grid Progressive Crop", layout = "grid_progressive" },
-    { name = "Cropped Horizontal", layout = "h_centered" },
-    { name = "Cropped Vertical", layout = "v_centered" },
-    { name = "Progressive Horizontal", layout = "h_progressive" },
-    { name = "Progressive Vertical", layout = "v_progressive" },
+    { 
+        name = "Overview", 
+        layout = "grid"
+    },
+    { 
+        name = "Grid", 
+        submodes = {
+            { name = "Center Crop", layout = "grid_centered" },
+            { name = "Progressive", layout = "grid_progressive" }
+        }
+    },
+    { 
+        name = "Horizontal", 
+        submodes = {
+            { name = "Center Crop", layout = "h_centered" },
+            { name = "Progressive", layout = "h_progressive" }
+        }
+    },
+    { 
+        name = "Vertical", 
+        submodes = {
+            { name = "Center Crop", layout = "v_centered" },
+            { name = "Progressive", layout = "v_progressive" }
+        }
+    }
 }
 
 local menu_index = 1
+local global_submode_index = 1  -- Global submode that persists across mode changes
 local menu_active = false
 local original_layout = nil
 local current_font_size = nil
@@ -147,7 +166,7 @@ local function build_grid_layout()
     for i = 1, video_count do
         local filename = get_filename(i)
         -- Use larger font multiplier for grid layout since videos are smaller
-        local text_overlay = generate_info_text(i, filename, 3.0) .. string.format("[v%d];", i)
+        local text_overlay = generate_info_text(i, filename, 2.0) .. string.format("[v%d];", i)
         filter_chain = filter_chain .. text_overlay
     end
 
@@ -734,14 +753,18 @@ local function build_single_video(index)
 end
 
 local function update_menu_entries()
-    while #modes > 7 do
+    -- Remove any individual video entries that might have been added
+    while #modes > 4 do
         table.remove(modes)
     end
     
     local video_count = count_video_tracks()
     for i = 1, video_count do
         local filename = get_filename(i)
-        table.insert(modes, { name = string.format("Video %d: %s", i, filename), layout = i })
+        table.insert(modes, { 
+            name = string.format("Video %d: %s", i, filename), 
+            layout = i
+        })
     end
 end
 
@@ -760,66 +783,60 @@ mp.register_event("file-loaded", function()
     end
 end)
 
+
+
 local function apply_mode()
     local selected = modes[menu_index]
+    local layout = nil
+    local message = ""
     
-    if selected.layout == "grid" then
-        local grid = build_grid_layout()
-        if grid then
-            mp.set_property("lavfi-complex", grid)
-            mp.osd_message("Switched to Grid View", 2)
+    if selected.submodes then
+        -- Mode with submodes - use global submode index
+        local submode = selected.submodes[global_submode_index]
+        if not submode then
+            submode = selected.submodes[1]  -- Fallback to first submode
+            global_submode_index = 1
+        end
+        
+        if submode.layout == "grid_centered" then
+            layout = build_grid_centered_layout()
+        elseif submode.layout == "grid_progressive" then
+            layout = build_grid_progressive_layout()
+        elseif submode.layout == "h_centered" then
+            layout = build_h_centered_layout()
+        elseif submode.layout == "h_progressive" then
+            layout = build_h_progressive_layout()
+        elseif submode.layout == "v_centered" then
+            layout = build_v_centered_layout()
+        elseif submode.layout == "v_progressive" then
+            layout = build_v_progressive_layout()
         else
-            mp.osd_message("Could not create grid layout", 2)
-        end
-    elseif selected.layout == "grid_centered" then
-        local layout = build_grid_centered_layout()
-        if layout then
-            mp.set_property("lavfi-complex", layout)
-            mp.osd_message("Switched to Grid Center Crop View", 2)
-        else
-            mp.osd_message("Could not create grid center crop layout", 2)
-        end
-    elseif selected.layout == "grid_progressive" then
-        local layout = build_grid_progressive_layout()
-        if layout then
-            mp.set_property("lavfi-complex", layout)
-            mp.osd_message("Switched to Grid Progressive Crop View", 2)
-        else
-            mp.osd_message("Could not create grid progressive crop layout", 2)
-        end
-    elseif selected.layout == "h_centered" then
-        local layout = build_h_centered_layout()
-        if layout then
-            mp.set_property("lavfi-complex", layout)
-            mp.osd_message("Switched to Horizontal Center Crop View", 2)
-        end
-    elseif selected.layout == "v_centered" then
-        local layout = build_v_centered_layout()
-        if layout then
-            mp.set_property("lavfi-complex", layout)
-            mp.osd_message("Switched to Vertical Center Crop View", 2)
-        end
-    elseif selected.layout == "h_progressive" then
-        local layout = build_h_progressive_layout()
-        if layout then
-            mp.set_property("lavfi-complex", layout)
-            mp.osd_message("Switched to Horizontal Progressive View", 2)
-        end
-    elseif selected.layout == "v_progressive" then
-        local layout = build_v_progressive_layout()
-        if layout then
-            mp.set_property("lavfi-complex", layout)
-            mp.osd_message("Switched to Vertical Progressive View", 2)
-        end
-    else
-        local idx = selected.layout
-        if type(idx) == "number" then
-            local single = build_single_video(idx)
-            if single then
-                mp.set_property("lavfi-complex", single)
-                mp.osd_message("Switched to " .. selected.name, 2)
+            local idx = submode.layout
+            if type(idx) == "number" then
+                layout = build_single_video(idx)
             end
         end
+        
+        message = selected.name .. " - " .. submode.name
+    else
+        -- Single mode (Overview)
+        if selected.layout == "grid" then
+            layout = build_grid_layout()
+        else
+            local idx = selected.layout
+            if type(idx) == "number" then
+                layout = build_single_video(idx)
+            end
+        end
+        
+        message = selected.name
+    end
+    
+    if layout then
+        mp.set_property("lavfi-complex", layout)
+        mp.osd_message("Switched to " .. message, 2)
+    else
+        mp.osd_message("Could not create " .. message .. " layout", 2)
     end
 end
 
@@ -838,7 +855,21 @@ local function create_ass_menu()
         local selected = (i == menu_index)
         local prefix = selected and "→ " or "   "
         local color = selected and "{\\1c&HFFFFFF&}" or "{\\1c&HCCCCCC&}"
-        ass:append(string.format("%s%s%s\\N", color, prefix, item.name))
+        
+        -- Show main category
+        ass:append(string.format("%s%s%s", color, prefix, item.name))
+        
+        -- Show subcategory if this item is selected and has submodes
+        if selected and item.submodes then
+            local submode = item.submodes[global_submode_index]
+            if submode then
+                ass:append(string.format(" - {\\1c&HFFFF00&}%s{\\1c&H666666&\\1a&H80&} ← →", submode.name))
+            end
+        elseif selected then
+            ass:append("{\\1c&H666666&}")
+        end
+        
+        ass:append("\\N")
     end
 
     return ass.text
@@ -852,6 +883,8 @@ end
 local function close_menu()
     mp.remove_key_binding("layout-up")
     mp.remove_key_binding("layout-down")
+    mp.remove_key_binding("layout-left")
+    mp.remove_key_binding("layout-right")
     mp.remove_key_binding("layout-select")
     mp.remove_key_binding("layout-cancel")
     menu_active = false
@@ -870,6 +903,24 @@ local function layout_down()
     render_menu()
 end
 
+local function layout_left()
+    local selected = modes[menu_index]
+    if selected.submodes then
+        global_submode_index = global_submode_index - 1
+        if global_submode_index < 1 then global_submode_index = #selected.submodes end
+        render_menu()
+    end
+end
+
+local function layout_right()
+    local selected = modes[menu_index]
+    if selected.submodes then
+        global_submode_index = global_submode_index + 1
+        if global_submode_index > #selected.submodes then global_submode_index = 1 end
+        render_menu()
+    end
+end
+
 local function layout_select()
     apply_mode()
     close_menu()
@@ -886,10 +937,13 @@ local function show_layout_menu()
     update_menu_entries()
     if menu_index < 1 then menu_index = 1 end
     if menu_index > #modes then menu_index = #modes end
+    if global_submode_index < 1 then global_submode_index = 1 end
     
     render_menu()
     mp.add_forced_key_binding("UP", "layout-up", layout_up)
     mp.add_forced_key_binding("DOWN", "layout-down", layout_down)
+    mp.add_forced_key_binding("LEFT", "layout-left", layout_left)
+    mp.add_forced_key_binding("RIGHT", "layout-right", layout_right)
     mp.add_forced_key_binding("ENTER", "layout-select", layout_select)
     mp.add_forced_key_binding("ESC", "layout-cancel", layout_cancel)
 end
@@ -905,7 +959,16 @@ local function global_layout_up()
     menu_index = menu_index - 1
     if menu_index < 1 then menu_index = #modes end
     apply_mode()
-    mp.osd_message("Selected: " .. (modes[menu_index] and modes[menu_index].name or ""), 1)
+    
+    local selected = modes[menu_index]
+    local message = selected.name
+    if selected.submodes then
+        local submode = selected.submodes[global_submode_index]
+        if submode then
+            message = selected.name .. " - " .. submode.name
+        end
+    end
+    mp.osd_message("Selected: " .. message, 1)
 end
 
 local function global_layout_down()
@@ -918,7 +981,16 @@ local function global_layout_down()
     menu_index = menu_index + 1
     if menu_index > #modes then menu_index = 1 end
     apply_mode()
-    mp.osd_message("Selected: " .. (modes[menu_index] and modes[menu_index].name or ""), 1)
+    
+    local selected = modes[menu_index]
+    local message = selected.name
+    if selected.submodes then
+        local submode = selected.submodes[global_submode_index]
+        if submode then
+            message = selected.name .. " - " .. submode.name
+        end
+    end
+    mp.osd_message("Selected: " .. message, 1)
 end
 
 mp.add_forced_key_binding("UP", "global-layout-up", global_layout_up)
