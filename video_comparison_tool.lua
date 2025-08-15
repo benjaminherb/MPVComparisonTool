@@ -32,7 +32,7 @@ local modes = {
 }
 
 local menu_index = 1
-local global_submode_index = 1  -- Global submode that persists across mode changes
+local global_submode_index = 1  
 local menu_active = false
 local original_layout = nil
 local current_font_size = nil
@@ -141,7 +141,8 @@ local function generate_global_counter()
     local text_color = "white@0.7"
     local border_color = "black@0.7"
 
-    local framerate = mp.get_property_number("estimated-vf-fps", "60")
+    -- Use numeric default for fps to avoid implicit coercion
+    local framerate = mp.get_property_number("estimated-vf-fps", 60)
 
     local counter = string.format(
         "drawtext=text='%%{eif\\:t*%s+0.1\\:d}':x=%s:y=%s:fontsize=%d:fontcolor=%s:bordercolor=%s:borderw=%d," ..
@@ -151,6 +152,66 @@ local function generate_global_counter()
     )
 
     return counter
+end
+
+-- Ensure a semicolon is present when concatenating filter steps
+local function ensure_sep(chain)
+    if #chain == 0 or chain:sub(-1) == ';' then return chain end
+    return chain .. ';'
+end
+
+-- Common grid stack builder for 1..9 inputs (exactly mirrors existing logic)
+local function build_grid_stack(video_count)
+    local chain = ""
+    if video_count == 1 then
+        chain = chain .. "[v1]copy[vo]"
+    elseif video_count == 2 then
+        chain = chain .. "[v1][v2]hstack=inputs=2[vo]"
+    elseif video_count == 3 then
+        chain = chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3]pad=w=2*iw:h=ih:x=(ow-iw)/2:y=0[scaled_v3];[tmp1][scaled_v3]vstack=inputs=2[vo]"
+    elseif video_count == 4 then
+        chain = chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3][v4]hstack=inputs=2[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 5 then
+        chain = chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5]hstack=inputs=2[tmp2_sm];[tmp2_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 6 then
+        chain = chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
+    elseif video_count == 7 then
+        chain = chain .. "[v1][v2]hstack=inputs=2[tmp1_sm];[tmp1_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp1];[v3][v4][v5]hstack=inputs=3[tmp2];[v6][v7]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
+    elseif video_count == 8 then
+        chain = chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2]vstack=inputs=2[tmp4];[tmp4][tmp3]vstack=inputs=2[vo]"
+    elseif video_count == 9 then
+        chain = chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8][v9]hstack=inputs=3[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
+    else
+        local inputs = {}
+        for i = 1, video_count do
+            table.insert(inputs, "[v" .. i .. "]")
+        end
+        chain = chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
+    end
+    return chain
+end
+
+-- Append an optional scale to match the current video params
+local function append_scale(chain)
+    local target_w = mp.get_property_number("video-params/w", 0)
+    local target_h = mp.get_property_number("video-params/h", 0)
+    if target_w and target_w > 0 and target_h and target_h > 0 then
+        chain = ensure_sep(chain)
+        chain = chain .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
+    else
+        msg.warn("Could not determine source video resolution; not scaling grid output")
+    end
+    return chain
+end
+
+-- Append the global frame/time counter if enabled
+local function append_global_counter(chain)
+    local global_counter = generate_global_counter()
+    if global_counter ~= "" then
+        chain = ensure_sep(chain)
+        chain = chain .. string.format("[vo]%s[vo]", global_counter)
+    end
+    return chain
 end
 
 local function build_grid_layout()
@@ -170,49 +231,12 @@ local function build_grid_layout()
         filter_chain = filter_chain .. text_overlay
     end
 
-    if video_count == 1 then
-        filter_chain = filter_chain .. "[v1]copy[vo]"
-    elseif video_count == 2 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[vo]"
-    elseif video_count == 3 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3]pad=w=2*iw:h=ih:x=(ow-iw)/2:y=0[scaled_v3];[tmp1][scaled_v3]vstack=inputs=2[vo]"
-    elseif video_count == 4 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3][v4]hstack=inputs=2[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 5 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5]hstack=inputs=2[tmp2_sm];[tmp2_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 6 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 7 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1_sm];[tmp1_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp1];[v3][v4][v5]hstack=inputs=3[tmp2];[v6][v7]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
-    elseif video_count == 8 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2]vstack=inputs=2[tmp4];[tmp4][tmp3]vstack=inputs=2[vo]"
-    elseif video_count == 9 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8][v9]hstack=inputs=3[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
-    else
-        local inputs = {}
-        for i = 1, video_count do
-            table.insert(inputs, "[v" .. i .. "]")
-        end
-        filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
-    end 
+    filter_chain = filter_chain .. build_grid_stack(video_count)
 
-    local target_w = mp.get_property_number("video-params/w", 0)
-    local target_h = mp.get_property_number("video-params/h", 0)
-    if target_w and target_w > 0 and target_h and target_h > 0 then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
-    else
-        msg.warn("Could not determine source video resolution; not scaling grid output")
-    end
+    filter_chain = append_scale(filter_chain)
 
     -- Add global frame/time counter at bottom center
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = append_global_counter(filter_chain)
 
     return filter_chain
 end
@@ -251,48 +275,11 @@ local function build_grid_centered_layout()
         end
     end
 
-    if video_count == 1 then
-        filter_chain = filter_chain .. "[v1]copy[vo]"
-    elseif video_count == 2 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[vo]"
-    elseif video_count == 3 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3]pad=w=2*iw:h=ih:x=(ow-iw)/2:y=0[scaled_v3];[tmp1][scaled_v3]vstack=inputs=2[vo]"
-    elseif video_count == 4 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3][v4]hstack=inputs=2[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 5 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5]hstack=inputs=2[tmp2_sm];[tmp2_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 6 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 7 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1_sm];[tmp1_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp1];[v3][v4][v5]hstack=inputs=3[tmp2];[v6][v7]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
-    elseif video_count == 8 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2]vstack=inputs=2[tmp4];[tmp4][tmp3]vstack=inputs=2[vo]"
-    elseif video_count == 9 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8][v9]hstack=inputs=3[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
-    else
-        local inputs = {}
-        for i = 1, video_count do
-            table.insert(inputs, "[v" .. i .. "]")
-        end
-        filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
-    end
+    filter_chain = filter_chain .. build_grid_stack(video_count)
 
-    local target_w = mp.get_property_number("video-params/w", 0)
-    local target_h = mp.get_property_number("video-params/h", 0)
-    if target_w and target_w > 0 and target_h and target_h > 0 then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
-    else
-        msg.warn("Could not determine source video resolution; not scaling grid output")
-    end
+    filter_chain = append_scale(filter_chain)
 
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = append_global_counter(filter_chain)
 
     return filter_chain
 end
@@ -464,48 +451,9 @@ local function build_grid_progressive_layout()
         end
     end
 
-    if video_count == 1 then
-        filter_chain = filter_chain .. "[v1]copy[vo]"
-    elseif video_count == 2 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[vo]"
-    elseif video_count == 3 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3]pad=w=2*iw:h=ih:x=(ow-iw)/2:y=0[scaled_v3];[tmp1][scaled_v3]vstack=inputs=2[vo]"
-    elseif video_count == 4 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1];[v3][v4]hstack=inputs=2[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 5 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5]hstack=inputs=2[tmp2_sm];[tmp2_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 6 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[tmp1][tmp2]vstack=inputs=2[vo]"
-    elseif video_count == 7 then
-        filter_chain = filter_chain .. "[v1][v2]hstack=inputs=2[tmp1_sm];[tmp1_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp1];[v3][v4][v5]hstack=inputs=3[tmp2];[v6][v7]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
-    elseif video_count == 8 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8]hstack=inputs=2[tmp3_sm];[tmp3_sm]pad=w=3*iw/2:h=ih:x=(ow-iw)/2:y=0[tmp3];[tmp1][tmp2]vstack=inputs=2[tmp4];[tmp4][tmp3]vstack=inputs=2[vo]"
-    elseif video_count == 9 then
-        filter_chain = filter_chain .. "[v1][v2][v3]hstack=inputs=3[tmp1];[v4][v5][v6]hstack=inputs=3[tmp2];[v7][v8][v9]hstack=inputs=3[tmp3];[tmp1][tmp2][tmp3]vstack=inputs=3[vo]"
-    else
-        local inputs = {}
-        for i = 1, video_count do
-            table.insert(inputs, "[v" .. i .. "]")
-        end
-        filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
-    end
-
-    local target_w = mp.get_property_number("video-params/w", 0)
-    local target_h = mp.get_property_number("video-params/h", 0)
-    if target_w and target_w > 0 and target_h and target_h > 0 then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
-    else
-        msg.warn("Could not determine source video resolution; not scaling grid output")
-    end
-
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = filter_chain .. build_grid_stack(video_count)
+    filter_chain = append_scale(filter_chain)
+    filter_chain = append_global_counter(filter_chain)
 
     return filter_chain
 end
@@ -547,12 +495,7 @@ local function build_h_centered_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end
     
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = append_global_counter(filter_chain)
     
     return filter_chain
 end
@@ -594,12 +537,7 @@ local function build_v_centered_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("vstack=inputs=%d[vo]", video_count)
     end
     
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = append_global_counter(filter_chain)
     
     return filter_chain
 end
@@ -652,12 +590,7 @@ local function build_h_progressive_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end
     
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = append_global_counter(filter_chain)
     
     return filter_chain
 end
@@ -711,12 +644,7 @@ local function build_v_progressive_layout()
     end
     
     -- Add global frame/time counter at bottom center
-    local global_counter = generate_global_counter()
-    if global_counter ~= "" then
-        local sep = ''
-        if filter_chain:sub(-1) ~= ';' then sep = ';' end
-        filter_chain = filter_chain .. sep .. string.format("[vo]%s[vo]", global_counter)
-    end
+    filter_chain = append_global_counter(filter_chain)
     
     return filter_chain
 end
@@ -851,18 +779,23 @@ local function create_ass_menu()
     ass:new_event()
     ass:pos(gap, gap) 
 
+    local alpha_full = "{\\1a&H00&}"
+    local alpha_dim  = "{\\1a&H80&}"
+
     for i, item in ipairs(modes) do
         local selected = (i == menu_index)
         local prefix = selected and "→ " or "   "
         local color = selected and "{\\1c&HFFFFFF&}" or "{\\1c&HCCCCCC&}"
+        local alpha = selected and alpha_full or alpha_dim
         
         -- Show main category
-        ass:append(string.format("%s%s%s", color, prefix, item.name))
+        ass:append(string.format("%s%s%s%s", color, alpha, prefix, item.name))
         
         -- Show subcategory if this item is selected and has submodes
         if selected and item.submodes then
             local submode = item.submodes[global_submode_index]
             if submode then
+                -- Keep arrows dim regardless of selected line alpha
                 ass:append(string.format(" - {\\1c&HFFFF00&}%s{\\1c&H666666&\\1a&H80&} ← →", submode.name))
             end
         elseif selected then
