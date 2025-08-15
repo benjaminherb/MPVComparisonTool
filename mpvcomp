@@ -18,17 +18,16 @@ idx=2
 videos=("$main" "$@")
 n=${#videos[@]}
 
-lines=("loaded $n videos")
+lines=("Loaded $n videos")
 for v in "${videos[@]}"; do lines+=("$v"); done
-lines+=("press X to open menu")
 
-big_font="h/15"
-small_font="h/30"
-spacing=1.1
+big_font="h/14"
+small_font="h/32"
+spacing=1.05
 
 fonts=()
 for i in "${!lines[@]}"; do
-    if [[ $i -eq 0 || $i -eq $((${#lines[@]} - 1)) ]]; then
+    if [[ $i -eq 0 ]]; then
         fonts+=("$big_font")
     else
         fonts+=("$small_font")
@@ -56,6 +55,11 @@ for i in "${!lines[@]}"; do
     draws+="x=(w-text_w)/2:y=(h-($height_expr))/2+$offset,"
     offset+=" + ($s * $spacing)"
 done
+
+hotkeys="X: Menu  P: Pixel O: Overlay"
+# escape ':' for ffmpeg drawtext option parsing
+hotkeys_esc="${hotkeys//:/\\:}"
+draws+="drawtext=font=Arial:text='$hotkeys_esc':fontsize=$small_font:fontcolor=white@0.9:bordercolor=black@0.6:borderw=2:box=1:boxcolor=black@0.35:boxborderw=8:x=(w-text_w)/2:y=h-($small_font*1.2),"
 
 draws="${draws%,}"
 lavfi+="[vid1]$draws[vo]"

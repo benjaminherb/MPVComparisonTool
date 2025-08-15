@@ -16,9 +16,6 @@ local menu_active = false
 local original_layout = nil
 local current_font_size = nil
 local overlay_active = true
--- Multiplier applied to font size when rendering the Grid layout.
--- Set to <1.0 to make grid text smaller, >1.0 to make it larger.
-local GRID_TEXT_SCALE = 1.0
 
 local function count_video_tracks()
     local count = 0
@@ -87,7 +84,6 @@ end
 
 local function generate_info_text(vid_index, filename)
     if not overlay_active then
-        -- return a passthrough filter so callers that append labels produce valid chains
         return string.format("[vid%d]copy", vid_index)
     end
 
@@ -109,8 +105,6 @@ local function generate_info_text(vid_index, filename)
         framerate, x_info, tp.frame_y, tp.font_size, text_color, border_color, tp.shadow,
         x_info, tp.time_y, tp.font_size, text_color, border_color, tp.shadow
     )
-
-    -- no launcher-specific hints here; mpvcomp provides a unified starting overlay
 
     return base
 end
@@ -157,13 +151,9 @@ local function build_grid_layout()
         filter_chain = filter_chain .. table.concat(inputs) .. string.format("hstack=inputs=%d[vo]", video_count)
     end 
 
-    -- Try to scale the combined grid output to the main video's source resolution
     local target_w = mp.get_property_number("video-params/w", 0)
     local target_h = mp.get_property_number("video-params/h", 0)
     if target_w and target_w > 0 and target_h and target_h > 0 then
-        -- take the existing [vo] output and scale it to the source resolution
-        -- ensure we separate filter descriptions with a semicolon so we don't
-        -- end up with '[vo][vo]scale...' which FFmpeg rejects
         local sep = ''
         if filter_chain:sub(-1) ~= ';' then sep = ';' end
         filter_chain = filter_chain .. sep .. string.format("[vo]scale=%d:%d[vo]", target_w, target_h)
@@ -555,24 +545,14 @@ end
 mp.add_forced_key_binding("UP", "global-layout-up", global_layout_up)
 mp.add_forced_key_binding("DOWN", "global-layout-down", global_layout_down)
 
-mp.add_key_binding("Z", "reset-view", function()
-    local grid = build_grid_layout()
-    if grid then
-        mp.set_property("lavfi-complex", grid)
-        mp.osd_message("Reset to Grid View", 2)
-    end
-end)
-
 mp.add_key_binding("X", "show-layout-menu", show_layout_menu)
 
 -- Toggle overlays (on-screen text) with O
 local function toggle_overlay()
     overlay_active = not overlay_active
-    -- if menu visible, re-render; otherwise reapply current layout to update overlays
     if menu_active then
         render_menu()
     else
-        -- reapply current layout to update overlays on the video output
         apply_mode()
     end
     mp.osd_message("overlays: " .. (overlay_active and "on" or "off"), 1)
