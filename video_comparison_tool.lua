@@ -37,6 +37,10 @@ local menu_active = false
 local original_layout = nil
 local current_font_size = nil
 local overlay_active = true
+local intro_timer = nil
+local intro_active = false
+local intro_overlay = nil
+local intro_bindings_added = false
 
 local function count_video_tracks()
     local count = 0
@@ -50,6 +54,16 @@ local function count_video_tracks()
     
     if count == 0 then count = 1 end
     return count
+end
+
+-- Treat trivial startup graphs as placeholders so we can still apply our grid
+local function is_placeholder_layout(layout)
+    if not layout or layout == "" then return true end
+    local normalized = layout:gsub("%s+", "")
+    -- Remove any [vidN]nullsink; occurrences
+    normalized = normalized:gsub("%[vid%d+%]nullsink;", "")
+    -- After stripping, accept a simple passthrough as placeholder
+    return normalized == "" or normalized == "[vid1]copy[vo]"
 end
 
 local function get_filename(index)
@@ -158,6 +172,77 @@ end
 local function ensure_sep(chain)
     if #chain == 0 or chain:sub(-1) == ';' then return chain end
     return chain .. ';'
+end
+
+-- Build and show a startup intro overlay for ~20 seconds
+local function ass_escape(s)
+    return (s:gsub("\\", "\\\\"):gsub("{", "\\{"):gsub("}", "\\}"))
+end
+
+local function path_basename(p)
+    if not p or p == '' then return '' end
+    return p:match("[^/\\]+$") or p
+end
+
+local function remove_intro()
+    if intro_timer then intro_timer:kill(); intro_timer = nil end
+    mp.set_osd_ass(0, 0, "")
+    intro_active = false
+end
+
+local function show_startup_intro()
+    local main_path = mp.get_property("path") or (mp.get_property("filename") or "")
+    local externals = mp.get_property_native("external-files", {}) or {}
+    local videos = { main_path }
+    for _, p in ipairs(externals) do table.insert(videos, p) end
+
+    local n = #videos
+    local lines = { string.format("Loaded %d videos", n) }
+    for i, v in ipairs(videos) do
+        local tag = string.format("[%d]", i)
+        table.insert(lines, string.format("%s  %s", tag, path_basename(v)))
+    end
+    table.insert(lines, " ")
+    table.insert(lines, "X: Menu    P: Pixel    O: Overlay")
+
+    local width = mp.get_property_number("width", 1920)
+    local height = mp.get_property_number("height", 1080)
+    local base_font_size = 42
+    local gap = math.min(width, height) * 0.02
+
+    local ass = assdraw.ass_new()
+    ass:new_event()
+    ass:pos(gap, gap)
+
+    local alpha_full = "{\\1a&H00&}"
+    local alpha_bright = "{\\1a&H20&}"
+    
+    for i = 1, #lines do
+        local text = ass_escape(lines[i])
+        if i == 1 then
+            -- First line (header) - bright white
+            ass:append(string.format("{\\1c&HFFFFFF&}%s%s", alpha_full, text))
+        else
+            -- Other lines - slightly dimmer
+            ass:append(string.format("{\\1c&HDDDDDD&}%s%s", alpha_bright, text))
+        end
+        if i < #lines then
+            ass:append("\\N")
+        end
+    end
+
+    mp.set_osd_ass(mp.get_property("osd-width"), mp.get_property("osd-height"), ass.text)
+    intro_active = true
+
+    if intro_timer then intro_timer:kill() end
+    intro_timer = mp.add_timeout(10, function()
+        if intro_active then remove_intro() end
+    end)
+
+    local function dismiss()
+        if intro_active then remove_intro() end
+    end
+
 end
 
 -- Common grid stack builder for 1..9 inputs (exactly mirrors existing logic)
@@ -702,13 +787,15 @@ mp.register_event("file-loaded", function()
 
     update_menu_entries()
 
-    if not original_layout or original_layout == "" then
+    if is_placeholder_layout(original_layout) then
         local grid = build_grid_layout()
         if grid then
             mp.set_property("lavfi-complex", grid)
             msg.info("Applied default grid layout")
         end
     end
+    -- Show intro overlay for ~20 seconds on first load
+    show_startup_intro()
 end)
 
 
@@ -762,7 +849,6 @@ local function apply_mode()
     
     if layout then
         mp.set_property("lavfi-complex", layout)
-        mp.osd_message("Switched to " .. message, 2)
     else
         mp.osd_message("Could not create " .. message .. " layout", 2)
     end
@@ -867,6 +953,10 @@ end
 local function show_layout_menu()
     if menu_active then return end
     menu_active = true
+    -- Cancel intro overlay when the menu opens
+    if intro_active then
+    remove_intro()
+    end
     update_menu_entries()
     if menu_index < 1 then menu_index = 1 end
     if menu_index > #modes then menu_index = #modes end
